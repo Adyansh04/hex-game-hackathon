@@ -54,6 +54,7 @@ colours.
 | `mcts_experiment_agent.py` | A Monte-Carlo Tree Search experiment (see *Design choices*). Not part of the linear progression. |
 | `arena.py` | Head-to-head benchmarking harness used for all numbers below. |
 | `resistance_agent_deepdive.md` | **Full technical explanation of `v7_resistance_agent.py`** — algorithms, math, diagrams. |
+| `visualizer/` | **Interactive visualizer** — records a real game and shows the agent's resistance networks, alpha-beta tree, paths and ranking as a standalone HTML page. See [`visualizer/README.md`](visualizer/README.md). |
 | `final_match.gif` | The winning final round. |
 
 > The file uploaded during the event was `v6_hackathon_agent.py` with comments

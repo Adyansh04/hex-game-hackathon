@@ -9,3 +9,10 @@ archive/
 *.zip
 .DS_Store
 .vscode/
+
+# Generated visualizer artifacts. To ship a sample, force-add one:
+#   git add -f visualizer/output/demo.html
+visualizer/output/
+
+# Local tooling config
+.claude/

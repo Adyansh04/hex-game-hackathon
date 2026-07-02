@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hex Agent Visualizer — v7 resistance</title>
+<style>/*__CSS__*/</style>
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <div class="title">
+      <h1>Hex Agent Visualizer</h1>
+      <div id="meta" class="meta"></div>
+    </div>
+    <div id="scrubber" class="scrubber">
+      <button id="btn-first" title="first">⏮</button>
+      <button id="btn-prev" title="previous">◀</button>
+      <button id="btn-play" title="play/pause">▶</button>
+      <button id="btn-next" title="next">▶▶</button>
+      <button id="btn-last" title="last">⏭</button>
+      <input id="range" type="range" min="0" max="0" value="0" step="1">
+      <span id="movelabel" class="movelabel"></span>
+    </div>
+  </header>
+
+  <main id="main">
+    <section id="left">
+      <div id="overlays" class="overlays"></div>
+      <div id="boardwrap">
+        <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div id="tooltip" class="tooltip" hidden></div>
+      </div>
+      <div id="legend" class="legend"></div>
+    </section>
+
+    <section id="right">
+      <nav id="tabs" class="tabs"></nav>
+      <div id="panels">
+        <div id="panel-move" class="panel"></div>
+        <div id="panel-ranking" class="panel" hidden></div>
+        <div id="panel-tree" class="panel" hidden></div>
+        <div id="panel-charts" class="panel" hidden></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>window.TRACE = HEXVIZ_DATA_PLACEHOLDER;</script>
+<script>/*__JS__*/</script>
+</body>
+</html>
