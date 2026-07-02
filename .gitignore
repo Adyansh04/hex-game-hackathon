@@ -1,2 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
 
-__pycache__
+# Local-only: experiments and files not meant for the public repo.
+# (Delete this folder before pushing, or leave it — it is ignored anyway.)
+archive/
+
+*.zip
+.DS_Store
+.vscode/

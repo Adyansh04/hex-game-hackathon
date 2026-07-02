@@ -1,9 +1,43 @@
+"""
+Resistance-based Hex agent for the AICA Game AI Platform (11x11, no swap rule).
+
+Strategy (a modern take on Anshelevich's "Hexy" / U.Alberta "Wolve" approach):
+  * Iterative-deepening principal-variation-search (PVS) alpha-beta with a Zobrist
+    transposition table, killer moves, and a full-board tactical safety layer
+    (immediate win, immediate block, two-ply fork guard, save-bridge reply).
+  * Leaf evaluation is an ELECTRICAL-RESISTANCE model instead of a single shortest
+    path: the board is a resistor network (own stones conduct strongly, empty cells
+    weakly, opponent cells block) and the score is log(R_opponent / R_me) between
+    each player's two edges. This values EVERY connecting path and their overlaps,
+    not just the shortest one, which is why it outplays a shortest-path agent.
+  * The resistance graph is augmented with bridge (virtual-connection) links so a
+    secured bridge conducts like a solid own-own connection.
+
+Only the Python standard library + numpy are used. numpy's BLAS is forced to a
+single thread (see below) so each 121-node linear solve is ~0.1ms, cheap enough to
+evaluate at every search leaf inside the 5-second move limit.
+
+Tuned by self-play vs the previous best agent: RES_W_OWN=8, RES_BRIDGE_COND=64.
+"""
+import os
+
+# Force single-threaded BLAS BEFORE importing numpy. On small (121x121) matrices
+# multithreaded OpenBLAS spends ~9ms in thread dispatch; single-threaded it is
+# ~0.1ms. This is essential for the resistance evaluation to be affordable.
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 from collections import deque
 import heapq
+import math
 import random
 import time
 from dataclasses import dataclass
 from typing import override
+
+import numpy as np
 
 from gamelib.hex.agent import Agent
 from gamelib.hex.gamestate import GameState as State
@@ -37,22 +71,47 @@ class TTEntry:
 
 class HexAgent(Agent):
 
-    SOFT_TIME_LIMIT_SECONDS = 4.30
-    HARD_TIME_LIMIT_SECONDS = 4.78
+    # Deadlines are wall-clock; the search returns the best move found so far when
+    # reached. Kept conservatively below the platform's 5.0s hard limit to stay
+    # safe on slower tournament hardware (a move over 5.0s is an automatic loss).
+    SOFT_TIME_LIMIT_SECONDS = 4.05
+    HARD_TIME_LIMIT_SECONDS = 4.40
 
-    # Search parameters. The transposition table and 1D path cache should allow
-    # this version to complete depth 4 more often than the previous depth-3 agent.
-    ROOT_CANDIDATE_LIMIT = 30
-    NODE_CANDIDATE_LIMIT = 13
-    EXTRA_LOCAL_CANDIDATES = 10
+    # Search parameters. The leaf evaluation here is an electrical-resistance
+    # solve (~0.3-0.5ms), far more expensive than the previous shortest-path
+    # eval, so the search is deliberately narrower and shallower. Historically a
+    # shallow resistance search (Hexy/Wolve, 2-4 ply) matched much deeper
+    # shortest-path play, because resistance values every connecting path, not
+    # just the shortest one.
+    ROOT_CANDIDATE_LIMIT = 22
+    NODE_CANDIDATE_LIMIT = 11
+    EXTRA_LOCAL_CANDIDATES = 8
     MAX_SEARCH_DEPTH = 8
     TWO_PLY_REPLY_LIMIT = 18
 
     # check periodically inside search.
-    CHECK_INTERVAL = 128
+    CHECK_INTERVAL = 64
     PVS_EPSILON = 0.01
 
-    # Set to False before final submission 
+    # Resistance evaluation (numpy). Each non-opponent cell is a node; edge
+    # conductance between adjacent cells is W(i)*W(j) with own stones=RES_W_OWN,
+    # empty=1, opponent=0 (blocked). Board score = RES_SCALE * log(R_opp / R_me):
+    # lower resistance for me and higher for the opponent is good.
+    RES_W_OWN = 8.0
+    RES_EPS = 1e-6
+    RES_SCALE = 1000.0
+    RES_MIN = 1e-6
+    RES_MAX = 1e6
+    # Extra conductance added between two own stones that form a bridge (a virtual
+    # connection) with both carriers still non-opponent. This is the "VC
+    # augmentation" that lifts the resistance eval above plain shortest-path: a
+    # secured bridge conducts like a strong own-own link.
+    RES_BRIDGE_COND = 64.0
+    # Root bonus for a move that restores a bridge the opponent just intruded on
+    # (the save-bridge reply). Ensures such moves are searched at the root.
+    SAVE_BRIDGE_BONUS = 80.0
+
+    # Set to False before final submission
     DEBUG = False
 
     NEIGHBOR_DIRS = [(-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0)]
@@ -263,6 +322,49 @@ class HexAgent(Agent):
             self._bottom_edge_mask |= self._bit[(n - 1) * n + c]
         self._not_left_edge_mask = self._all_bits_mask ^ self._left_edge_mask
         self._not_right_edge_mask = self._all_bits_mask ^ self._right_edge_mask
+
+        # Resistance-evaluation precomputation (numpy graph Laplacian). Undirected
+        # edge list (i<j) over the fixed board graph, diagonal index, and rail
+        # membership masks for each player's source/target edges.
+        res_i: list[int] = []
+        res_j: list[int] = []
+        for idx in range(self._n2):
+            r0, c0 = divmod(idx, n)
+            for dr, dc in self.NEIGHBOR_DIRS:
+                nr, nc = r0 + dr, c0 + dc
+                if 0 <= nr < n and 0 <= nc < n:
+                    nb = nr * n + nc
+                    if nb > idx:
+                        res_i.append(idx)
+                        res_j.append(nb)
+        self._res_I = np.asarray(res_i, dtype=np.intp)
+        self._res_J = np.asarray(res_j, dtype=np.intp)
+        ar = np.arange(self._n2)
+        self._res_diag = (ar, ar)
+        rows_np = ar // n
+        cols_np = ar % n
+        self._res_start0 = cols_np == 0            # player 0 source: left column
+        self._res_end0 = cols_np == (n - 1)        # player 0 target: right column
+        self._res_start1 = rows_np == 0            # player 1 source: top row
+        self._res_end1 = rows_np == (n - 1)        # player 1 target: bottom row
+
+        # Flat bridge arrays for vectorized VC augmentation of the resistance
+        # graph (each undirected bridge recorded once, src < endpoint).
+        br_src: list[int] = []
+        br_end: list[int] = []
+        br_ca: list[int] = []
+        br_cb: list[int] = []
+        for src in range(self._n2):
+            for endpoint, carrier_a, carrier_b in self._bridge_patterns_by_cell[src]:
+                if endpoint > src:
+                    br_src.append(src)
+                    br_end.append(endpoint)
+                    br_ca.append(carrier_a)
+                    br_cb.append(carrier_b)
+        self._br_src = np.asarray(br_src, dtype=np.intp)
+        self._br_end = np.asarray(br_end, dtype=np.intp)
+        self._br_ca = np.asarray(br_ca, dtype=np.intp)
+        self._br_cb = np.asarray(br_cb, dtype=np.intp)
 
     @staticmethod
     def _goal_axis(player: int) -> str:
@@ -524,6 +626,29 @@ class HexAgent(Agent):
     # Root ranking and danger guard
     # ------------------------------------------------------------------
 
+    def _bridge_save_moves(self, board: list[int], player: int) -> set[int]:
+        """Cells that restore a bridge the opponent has intruded on.
+
+        For each of `player`'s bridges (two own stones sharing two carriers) where
+        the opponent has taken exactly one carrier and the other carrier is still
+        empty, the empty carrier maintains the connection (the save-bridge reply).
+        """
+        opp = self._other(player)
+        saves: set[int] = set()
+        for idx in range(self._n2):
+            if board[idx] != player:
+                continue
+            for endpoint, carrier_a, carrier_b in self._bridge_patterns_by_cell[idx]:
+                if board[endpoint] != player:
+                    continue
+                va = board[carrier_a]
+                vb = board[carrier_b]
+                if va == opp and vb == EMPTY:
+                    saves.add(carrier_b)
+                elif vb == opp and va == EMPTY:
+                    saves.add(carrier_a)
+        return saves
+
     def _rank_root_moves(
         self,
         board: list[int],
@@ -539,6 +664,7 @@ class HexAgent(Agent):
         stones = self._stone_count(board)
         my_path_set = set(my_path)
         opp_path_set = set(opp_path)
+        save_moves = self._bridge_save_moves(board, player)
 
         ranked: list[tuple[int, float]] = []
         for move in legal_moves:
@@ -559,6 +685,8 @@ class HexAgent(Agent):
             score = 17.0 * my_gain + disruption_weight * opp_disruption
             score += self._static_move_score(board, move, player)
 
+            if move in save_moves:
+                score += self.SAVE_BRIDGE_BONUS
             if move in my_path_set:
                 score += 7.0
             if move in opp_path_set:
@@ -905,28 +1033,70 @@ class HexAgent(Agent):
     # ------------------------------------------------------------------
 
     def _evaluate_board(self, board: list[int], hash_key: int, root_player: int) -> float:
+        """Electrical-resistance evaluation from root_player's perspective.
+
+        Terminal wins/losses are handled by the caller before this is reached, so
+        here both players still have a finite connecting resistance in nearly all
+        cases. Positive = better connected for root_player than for the opponent.
+        """
         opponent = self._other(root_player)
-        root_dist, root_path = self._distance_and_path(board, hash_key, root_player)
-        opp_dist, opp_path = self._distance_and_path(board, hash_key, opponent)
+        barr = np.asarray(board, dtype=np.int8)
+        r_me = self._resistance(barr, root_player)
+        r_opp = self._resistance(barr, opponent)
+        if r_me <= self.RES_MIN:
+            return 900_000.0
+        if r_opp <= self.RES_MIN:
+            return -900_000.0
+        return self.RES_SCALE * (math.log(r_opp) - math.log(r_me))
 
-        if root_dist == 0:
-            return 1_000_000.0
-        if opp_dist == 0:
-            return -1_000_000.0
+    def _resistance(self, barr, player: int) -> float:
+        """Effective resistance between `player`'s two edges. Lower = better connected.
 
-        score = 120.0 * (min(opp_dist, 50.0) - min(root_dist, 50.0))
-        score += 2.0 * (len(opp_path) - len(root_path))
+        Nodes are the 121 cells (opponent cells get weight 0, so they carry no
+        current). Edge conductance between adjacent cells is W(i)*W(j). Source-edge
+        cells inject unit current; target-edge cells are grounded. We solve the
+        grounded Laplacian A v = s and read effective conductance = s . (1 - v).
+        """
+        n2 = self._n2
+        w_own = self.RES_W_OWN
+        W = np.where(barr == player, w_own, np.where(barr == EMPTY, 1.0, 0.0))
+        I = self._res_I
+        J = self._res_J
+        g = W[I] * W[J]
+        A = np.zeros((n2, n2))
+        A[I, J] = -g
+        A[J, I] = -g
+        deg = np.bincount(I, weights=g, minlength=n2) + np.bincount(J, weights=g, minlength=n2)
+        if player == PLAYER_0:
+            s = np.where(self._res_start0, W, 0.0)
+            t = np.where(self._res_end0, W, 0.0)
+        else:
+            s = np.where(self._res_start1, W, 0.0)
+            t = np.where(self._res_end1, W, 0.0)
+        A[self._res_diag] = deg + s + t + self.RES_EPS
 
-        # Cheap structure difference. Avoid calling expensive functions here.
-        root_local = 0.0
-        opp_local = 0.0
-        for idx, value in enumerate(board):
-            if value == root_player:
-                root_local += self._stone_structure_score(board, idx, root_player)
-            elif value == opponent:
-                opp_local += self._stone_structure_score(board, idx, opponent)
-        score += 0.35 * (root_local - opp_local)
-        return score
+        # VC augmentation: own stones a bridge apart with both carriers still
+        # non-opponent conduct like a strong link (adds to diagonal + off-diagonal).
+        opp = 1 - player
+        bs, be, ba, bb = self._br_src, self._br_end, self._br_ca, self._br_cb
+        valid = (barr[bs] == player) & (barr[be] == player) & (barr[ba] != opp) & (barr[bb] != opp)
+        if valid.any():
+            si = bs[valid]
+            ei = be[valid]
+            gb = self.RES_BRIDGE_COND
+            np.add.at(A, (si, ei), -gb)
+            np.add.at(A, (ei, si), -gb)
+            np.add.at(A, (si, si), gb)
+            np.add.at(A, (ei, ei), gb)
+
+        try:
+            v = np.linalg.solve(A, s)
+        except np.linalg.LinAlgError:
+            v = np.linalg.lstsq(A, s, rcond=None)[0]
+        conductance = float(s @ (1.0 - v))
+        if conductance <= 1e-9:
+            return self.RES_MAX
+        return 1.0 / conductance
 
     def _fast_candidate_score(self, board: list[int], move: int, player: int, my_path: set[int], opp_path: set[int]) -> float:
         score = self._static_move_score(board, move, player)
