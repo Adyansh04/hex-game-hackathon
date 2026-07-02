@@ -6,6 +6,20 @@ game. It plays the champion against an opponent, records every decision, and pro
 
 ![how it works](../final_match.gif)
 
+## ▶ View it live (no download)
+
+GitHub can't run interactive HTML inside a rendered README (scripts/iframes are stripped),
+but the generated page is a **single self-contained file**, so you can open it straight
+from the browser:
+
+- **Quick, zero setup** — open the committed demo through htmlpreview:
+  **[▶ open the demo visualizer](https://htmlpreview.github.io/?https://github.com/Adyansh04/hex-game-hackathon/blob/main/visualizer/output/demo.html)**
+- **Best (fast & stable)** — enable **GitHub Pages** once (repo *Settings → Pages →
+  Deploy from a branch → `main` / root*), then open
+  `https://adyansh04.github.io/hex-game-hackathon/visualizer/output/demo.html`
+
+Or just download `visualizer/output/demo.html` and double-click it.
+
 ## What it shows (step through the game with the scrubber / ← → keys)
 
 For each of v7's moves:

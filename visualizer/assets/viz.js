@@ -282,7 +282,7 @@ function flashCell(i) { if (flashEl) flashEl.remove(); const { x, y } = cellXY(i
 function lineChart(title, series, opts) {
   opts = opts || {};
   const wrap = h("div", { class: "chart" }); wrap.appendChild(h("h4", null, title));
-  const W = 380, H = 120, m = { l: 34, r: 8, t: 8, b: 16 };
+  const W = 380, H = 120, m = { l: 38, r: 20, t: 8, b: 18 };
   const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none" });
   let lo = Infinity, hi = -Infinity;
   for (const s of series) for (const y of s.data) { if (y == null) continue; lo = Math.min(lo, y); hi = Math.max(hi, y); }

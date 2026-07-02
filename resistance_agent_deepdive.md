@@ -221,11 +221,11 @@ Rearranging over all nodes gives a linear system
 
 $$
 A\,\mathbf{v} = \mathbf{s}, \qquad
-A = L + \operatorname{diag}(\mathbf{s} + \mathbf{t}) + \varepsilon I,
+A = L + \mathrm{diag}(\mathbf{s} + \mathbf{t}) + \varepsilon I,
 $$
 
 where $L$ is the **weighted graph Laplacian** ($L_{ii} = \sum_j g_{ij}$,
-$L_{ij} = -g_{ij}$). The $\operatorname{diag}(\mathbf{s}+\mathbf{t})$ term grounds the
+$L_{ij} = -g_{ij}$). The $\mathrm{diag}(\mathbf{s}+\mathbf{t})$ term grounds the
 terminals and the tiny $\varepsilon I$ ($\varepsilon = 10^{-6}$) keeps $A$ strictly
 positive‑definite (and invertible even when isolated empty cells would otherwise make
 $L$ singular).
@@ -243,10 +243,10 @@ weights and edges recomputed from that player's perspective). The position score
 the root player's point of view, is
 
 $$
-\boxed{\;\text{score} = \texttt{RES\_SCALE}\cdot\big(\ln R_{\text{opp}} - \ln R_{\text{me}}\big) = \texttt{RES\_SCALE}\cdot \ln\frac{R_{\text{opp}}}{R_{\text{me}}}\;}
+\text{score} = k \cdot \big(\ln R_{\text{opp}} - \ln R_{\text{me}}\big) = k \cdot \ln\frac{R_{\text{opp}}}{R_{\text{me}}}, \qquad k = 1000
 $$
 
-with `RES_SCALE = 1000`. It is **positive when my resistance is lower than the
+with `k` = `RES_SCALE` = 1000. It is **positive when my resistance is lower than the
 opponent's** (I am better connected), symmetric around 0, and additive — the log makes
 "twice as connected" worth the same swing regardless of the absolute scale.
 
